@@ -1,0 +1,88 @@
+<?xml version='1.1' encoding='UTF-8'?>
+<project>
+  <actions/>
+  <description></description>
+  <keepDependencies>false</keepDependencies>
+  <properties>
+    <hudson.plugins.copyartifact.CopyArtifactPermissionProperty plugin="copyartifact@805.v9d1393350780">
+      <projectNameList>
+        <string>React-Deploy</string>
+      </projectNameList>
+    </hudson.plugins.copyartifact.CopyArtifactPermissionProperty>
+  </properties>
+  <scm class="hudson.plugins.git.GitSCM" plugin="git@5.11.0">
+    <configVersion>2</configVersion>
+    <userRemoteConfigs>
+      <hudson.plugins.git.UserRemoteConfig>
+        <url>https://github.com/berired/react-midterm.git</url>
+      </hudson.plugins.git.UserRemoteConfig>
+    </userRemoteConfigs>
+    <branches>
+      <hudson.plugins.git.BranchSpec>
+        <name>*/main</name>
+      </hudson.plugins.git.BranchSpec>
+    </branches>
+    <doGenerateSubmoduleConfigurations>false</doGenerateSubmoduleConfigurations>
+    <submoduleCfg class="empty-list"/>
+    <extensions/>
+  </scm>
+  <canRoam>true</canRoam>
+  <disabled>false</disabled>
+  <blockBuildWhenDownstreamBuilding>false</blockBuildWhenDownstreamBuilding>
+  <blockBuildWhenUpstreamBuilding>false</blockBuildWhenUpstreamBuilding>
+  <triggers>
+    <hudson.triggers.SCMTrigger>
+      <spec>*/1 * * * *</spec>
+      <ignorePostCommitHooks>false</ignorePostCommitHooks>
+    </hudson.triggers.SCMTrigger>
+  </triggers>
+  <concurrentBuild>false</concurrentBuild>
+  <builders>
+    <hudson.tasks.Shell>
+      <command>#!/bin/sh
+set -eu
+IMAGE=&quot;react-midterm-ci:${BUILD_NUMBER}&quot;
+TEMP_CONTAINER=&quot;react-ci-extract-${BUILD_NUMBER}&quot;
+# Remove output left by earlier builds.
+rm -rf artifacts extracted
+mkdir -p artifacts extracted/site
+cleanup() {
+  docker rm -f &quot;$TEMP_CONTAINER&quot; &gt;/dev/null 2&gt;&amp;1 || true
+}
+trap cleanup EXIT
+# Install dependencies, test, and build using Dockerfile.
+docker build --progress=plain -t &quot;$IMAGE&quot; .
+# Extract the compiled application from the final image.
+docker create --name &quot;$TEMP_CONTAINER&quot; &quot;$IMAGE&quot;
+docker cp &quot;$TEMP_CONTAINER:/usr/share/nginx/html/.&quot; extracted/site/
+# Record the source CI build and Git commit.
+cat &gt; extracted/site/release.json &lt;&lt;EOF
+{
+  &quot;ci_build&quot;: &quot;${BUILD_NUMBER}&quot;,
+  &quot;git_commit&quot;: &quot;${GIT_COMMIT}&quot;
+}
+EOF
+# Include the Dockerfile used to serve the artifact.
+cp Dockerfile.deploy extracted/Dockerfile
+# Package the compiled files and serving Dockerfile.
+tar -czf &quot;artifacts/react-app-${BUILD_NUMBER}.tar.gz&quot; \
+  -C extracted site Dockerfile
+echo &quot;Created artifact: react-app-${BUILD_NUMBER}.tar.gz&quot;
+echo &quot;Source commit: ${GIT_COMMIT}&quot;
+</command>
+      <configuredLocalRules/>
+    </hudson.tasks.Shell>
+  </builders>
+  <publishers>
+    <hudson.tasks.ArtifactArchiver>
+      <artifacts>artifacts/react-app-*.tar.gz</artifacts>
+      <allowEmptyArchive>false</allowEmptyArchive>
+      <onlyIfSuccessful>true</onlyIfSuccessful>
+      <fingerprint>false</fingerprint>
+      <defaultExcludes>true</defaultExcludes>
+      <caseSensitive>true</caseSensitive>
+      <followSymlinks>false</followSymlinks>
+    </hudson.tasks.ArtifactArchiver>
+  </publishers>
+  <buildWrappers/>
+</project>

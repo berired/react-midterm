@@ -1,0 +1,120 @@
+<?xml version='1.1' encoding='UTF-8'?>
+<project>
+  <actions/>
+  <description></description>
+  <keepDependencies>false</keepDependencies>
+  <properties>
+    <hudson.model.ParametersDefinitionProperty>
+      <parameterDefinitions>
+        <hudson.model.ChoiceParameterDefinition>
+          <name>TARGET_ENVIRONMENT</name>
+          <choices class="java.util.Arrays$ArrayList">
+            <a class="string-array">
+              <string>dev</string>
+              <string>test</string>
+              <string>acceptance</string>
+              <string>production</string>
+            </a>
+          </choices>
+        </hudson.model.ChoiceParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>CI_BUILD_NUMBER</name>
+          <trim>false</trim>
+        </hudson.model.StringParameterDefinition>
+      </parameterDefinitions>
+    </hudson.model.ParametersDefinitionProperty>
+  </properties>
+  <scm class="hudson.scm.NullSCM"/>
+  <canRoam>true</canRoam>
+  <disabled>false</disabled>
+  <blockBuildWhenDownstreamBuilding>false</blockBuildWhenDownstreamBuilding>
+  <blockBuildWhenUpstreamBuilding>false</blockBuildWhenUpstreamBuilding>
+  <triggers/>
+  <concurrentBuild>false</concurrentBuild>
+  <builders>
+    <hudson.tasks.Shell>
+      <command>#!/bin/sh
+set -eu
+case &quot;$TARGET_ENVIRONMENT&quot; in
+  dev|test|acceptance|production) ;;
+  *) echo &quot;Invalid deployment environment.&quot;; exit 1 ;;
+esac
+case &quot;$CI_BUILD_NUMBER&quot; in
+  &quot;&quot;|*[!0-9]*)
+    echo &quot;Enter a valid numeric CI build number.&quot;
+    exit 1
+    ;;
+esac
+rm -rf incoming deploy-context
+mkdir -p incoming deploy-context
+</command>
+      <configuredLocalRules/>
+    </hudson.tasks.Shell>
+    <hudson.plugins.copyartifact.CopyArtifact plugin="copyartifact@805.v9d1393350780">
+      <project>React-CI</project>
+      <filter>artifacts/react-app-${CI_BUILD_NUMBER}.tar.gz</filter>
+      <target>incoming</target>
+      <includeBuildNumberInTargetPath>false</includeBuildNumberInTargetPath>
+      <excludes></excludes>
+      <selector class="hudson.plugins.copyartifact.SpecificBuildSelector">
+        <buildNumber>${CI_BUILD_NUMBER}</buildNumber>
+      </selector>
+      <flatten>true</flatten>
+      <doNotFingerprintArtifacts>false</doNotFingerprintArtifacts>
+    </hudson.plugins.copyartifact.CopyArtifact>
+    <hudson.tasks.Shell>
+      <command>#!/bin/sh
+set -eu
+case &quot;$TARGET_ENVIRONMENT&quot; in
+  dev) PORT=8081 ;;
+  test) PORT=8082 ;;
+  acceptance) PORT=8083 ;;
+  production) PORT=8084 ;;
+  *) echo &quot;Invalid environment.&quot;; exit 1 ;;
+esac
+ARTIFACT=&quot;incoming/react-app-${CI_BUILD_NUMBER}.tar.gz&quot;
+CONTAINER=&quot;react-${TARGET_ENVIRONMENT}&quot;
+IMAGE=&quot;react-midterm-release:${CI_BUILD_NUMBER}&quot;
+test -f &quot;$ARTIFACT&quot;
+tar -xzf &quot;$ARTIFACT&quot; -C deploy-context
+test -f deploy-context/site/index.html
+test -f deploy-context/site/release.json
+test -f deploy-context/Dockerfile
+# Package existing files with Nginx; do not rebuild React.
+docker build -t &quot;$IMAGE&quot; deploy-context
+# Replace only the selected environment.
+if docker container inspect &quot;$CONTAINER&quot; &gt;/dev/null 2&gt;&amp;1; then
+  docker rm -f &quot;$CONTAINER&quot;
+fi
+docker run -d \
+  --name &quot;$CONTAINER&quot; \
+  --label &quot;midterm.ci-build=${CI_BUILD_NUMBER}&quot; \
+  --label &quot;midterm.environment=${TARGET_ENVIRONMENT}&quot; \
+  -p &quot;${PORT}:80&quot; \
+  &quot;$IMAGE&quot;
+READY=0
+for attempt in 1 2 3 4 5; do
+  if docker exec &quot;$CONTAINER&quot; \
+    wget -q -O /dev/null http://127.0.0.1/; then
+    READY=1
+    break
+  fi
+  sleep 2
+done
+if [ &quot;$READY&quot; -ne 1 ]; then
+  echo &quot;Deployment failed its application check.&quot;
+  docker logs &quot;$CONTAINER&quot;
+  exit 1
+fi
+echo &quot;Deployment successful.&quot;
+echo &quot;Environment: ${TARGET_ENVIRONMENT}&quot;
+echo &quot;Source CI build: ${CI_BUILD_NUMBER}&quot;
+echo &quot;Browser URL: http://localhost:${PORT}&quot;
+cat deploy-context/site/release.json
+</command>
+      <configuredLocalRules/>
+    </hudson.tasks.Shell>
+  </builders>
+  <publishers/>
+  <buildWrappers/>
+</project>
